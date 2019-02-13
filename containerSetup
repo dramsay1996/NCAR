@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#This script automates the creation of a virtual cluster made from docker containers
+
+#Parameters
+num_of_nodes=4
+
+#Build an image from the Dockerfile in the same directory as this script
+docker build -t=node .
+
+#Create all the nodes (docker containers)
+for ((i=1; i<=$num_of_nodes; i++))
+do
+docker run -h node_$i --name node_$i -p 22 --rm --privileged -d node
+done
+
+#Put the IP address and name of each container in the host file of each container
+
+for ((i=1; i<=$num_of_nodes; i++))
+do
+ for ((j=1; j<=$num_of_nodes; j++))
+ do
+  if [ "$i" -ne "$j" ]; then
+   ip=$(docker inspect -f "{{.NetworkSettings.IPAddress}}" node_$j)
+   docker exec node_$i bash -c "echo $ip node_$j >> /etc/hosts"
+   echo "wrote node_$j to node_$i host file"
+  fi
+ done
+done
+
+
+
+
+#Take the public and private keys from the host machine and put them on every container
+for ((i=1; i<=$num_of_nodes; i++))
+do
+docker cp /etc/ssh/id_rsa node_$i:/root/.ssh/
+docker cp /etc/ssh/id_rsa.pub node_$i:/root/.ssh/
+docker exec node_$i chmod 600 /root/.ssh/id_rsa
+docker exec node_$i touch  /root/.ssh/authorized_keys
+docker exec node_$i bash -c "cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys"
+done
+
+systemctl enable rpcbind
+systemctl enable nfs-server
+systemctl enable nfs-lock
+systemctl enable nfs-idmap
+systemctl start rpcbind
+systemctl start nfs-server
+systemctl start nfs-lock
+systemctl start nfs-idmap
+systemctl restart nfs-server
+
+for ((i=1; i<=$num_of_nodes; i++))
+do
+docker exec node_$i mount -t nfs 192.168.0.97:/home /mnt/nfs/home
+docker exec node_$i mount -t nfs 192.168.0.97:/var/nfsshare/ /mnt/nfs/var/nfsshare
+done
+
+docker exec node_2 yum install mariadb-server mariadb-devel -y
+
+for ((i=1; i<=$num_of_nodes; i++))
+do
+docker exec node_$i MUNGEUSER=991
+docker exec node_$i groupadd -g munge $MUNGEUSER
+docker exec node_$i useradd  -m -c "MUNGE Uid 'N' Gid Emporium" -d /var/lib/munge -u $MUNGEUSER -g munge  -s /sbin/nologin munge
+docker exec node_$i SLURMUSER=992
+docker exec node_$i groupadd -g $SLURMUSER slurm
+docker exec node_$i useradd  -m -c "SLURM workload manager" -d /var/lib/slurm -u $SLURMUSER -g slurm  -s /bin/bash slurm
+
+docker cp /etc/munge/munge.key node_$i:/etc/munge/
+
+docker exec node_$i chown -R munge: /etc/munge/ /var/log/munge/
+docker exec node_$i chmod 0700 /etc/munge/ /var/log/munge/
+
+docker exec node_$i systemctl enable munge
+docker exec node_$i systemctl start munge
+
+done
+
+
+
+
+
+exit 0
