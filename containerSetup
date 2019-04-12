@@ -8,11 +8,16 @@ num_of_nodes=4
 #Build an image from the Dockerfile in the same directory as this script
 docker build -t=node .
 
+
 #Create all the nodes (docker containers)
 for ((i=1; i<=$num_of_nodes; i++))
 do
 docker run -h node_$i --name node_$i -p 22 --rm --privileged -d node
 done
+
+echo "Containers are Running"
+
+echo "Setting Up Host Files"
 
 #Put the IP address and name of each container in the host file of each container
 
@@ -28,8 +33,8 @@ do
  done
 done
 
-
-
+echo "Container Host Files are Good"
+echo "Setting up Passwordless SSH"
 
 #Take the public and private keys from the host machine and put them on every container
 for ((i=1; i<=$num_of_nodes; i++))
@@ -41,10 +46,14 @@ docker exec node_$i touch  /root/.ssh/authorized_keys
 docker exec node_$i bash -c "cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys"
 done
 
+echo "Passwordless SSH is Good"
+echo "Mounting NFS"
+
 systemctl enable rpcbind
 systemctl enable nfs-server
 systemctl enable nfs-lock
 systemctl enable nfs-idmap
+
 systemctl start rpcbind
 systemctl start nfs-server
 systemctl start nfs-lock
@@ -57,16 +66,21 @@ docker exec node_$i mount -t nfs 192.168.0.97:/home /mnt/nfs/home
 docker exec node_$i mount -t nfs 192.168.0.97:/var/nfsshare/ /mnt/nfs/var/nfsshare
 done
 
-docker exec node_2 yum install mariadb-server mariadb-devel -y
+echo "NFS is Good"
+echo "Setting Up Munge for Slurm"
 
 for ((i=1; i<=$num_of_nodes; i++))
 do
-docker exec node_$i MUNGEUSER=991
-docker exec node_$i groupadd -g munge $MUNGEUSER
-docker exec node_$i useradd  -m -c "MUNGE Uid 'N' Gid Emporium" -d /var/lib/munge -u $MUNGEUSER -g munge  -s /sbin/nologin munge
-docker exec node_$i SLURMUSER=992
-docker exec node_$i groupadd -g $SLURMUSER slurm
-docker exec node_$i useradd  -m -c "SLURM workload manager" -d /var/lib/slurm -u $SLURMUSER -g slurm  -s /bin/bash slurm
+
+docker exec node_$i yum install mariadb-server mariadb-devel -y
+
+docker exec node_$i groupadd -g 991 munge
+docker exec node_$i useradd  -m -c "this is the munge user" -d /var/lib/munge -u 991 -g munge -s /sbin/nologin munge
+
+docker exec node_$i groupadd -g 992 slurm
+docker exec node_$i useradd  -m -c "this is the slurm user" -d /var/lib/slurm -u 992 -g slurm -s /bin/bash slurm
+
+docker exec node_$i yum install munge munge-devel munge-libs -y
 
 docker cp /etc/munge/munge.key node_$i:/etc/munge/
 
@@ -76,10 +90,59 @@ docker exec node_$i chmod 0700 /etc/munge/ /var/log/munge/
 docker exec node_$i systemctl enable munge
 docker exec node_$i systemctl start munge
 
+echo "Munge is Good"
+echo "Installing Stuff for Slurm"
+
+docker exec node_$i yum install openssl openssl-devel pam-devel numactl numactl-devel hwloc hwloc-devel lua lua-devel readline-devel rrdtool-devel ncurses-devel man2html libibmad libibumad -y
+
+echo "Installing Slurm RPMs from Host Machine"
+
+docker cp /cluster/localRpmInstaller node_$i:/etc/
+
+docker exec node_$i /etc/localRpmInstaller
+
+echo "be patient or you'll eff it up"
+
+docker cp /etc/slurm/slurm.conf node_$i:/etc/slurm/
+
 done
 
+echo "Slurm RPMs are in the containers"
+echo "Configuring Slurm"
+
+#do this for all non-slurm nodes
+for ((i=2; i<=$num_of_nodes; i++))
+do
+docker exec node_$i mkdir /var/spool/slurmd
+docker exec node_$i chown slurm: /var/spool/slurmd
+docker exec node_$i chmod 777 /var/spool/slurmd
+docker exec node_$i touch /var/log/slurmd.log
+docker exec node_$i chown slurm: /var/log/slurmd.log
+done
+
+docker exec node_1 mkdir /var/spool/slurmctld
+docker exec node_1 chown slurm: /var/spool/slurmctld
+docker exec node_1 chmod 777 /var/spool/
+docker exec node_1 touch /var/log/slurmctld.log
+docker exec node_1 chown slurm: /var/log/slurmctld.log
+docker exec node_1 touch /var/log/slurm_jobacct.log /var/log/slurm_jobcomp.log
+docker exec node_1 chown slurm: /var/log/slurm_jobacct.log /var/log/slurm_jobcomp.log
+
+echo "Starting Slurm"
 
 
 
+for ((i=2; i<=$num_of_nodes; i++))
+do
+docker exec node_$i systemctl enable slurmd.service
+docker exec node_$i systemctl start slurmd.service
+docker exec node_$i systemctl status slurmd.service
+done
+
+docker exec node_1 systemctl enable slurmctld.service
+docker exec node_1 systemctl start slurmctld.service
+docker exec node_1 systemctl status slurmctld.service
+
+echo "Done"
 
 exit 0

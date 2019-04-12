@@ -1,0 +1,7 @@
+#!/bin/bash
+
+#install local rpms from the nfs into the container
+
+yum install /mnt/nfs/var/nfsshare/*.rpm -y
+
+exit 0

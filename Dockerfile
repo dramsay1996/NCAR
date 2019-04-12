@@ -2,13 +2,16 @@
 FROM centos:latest
 
 #install sytemd and ssh
-RUN yum install -y systemd openssh-server openssh-clients dbus nfs-utils munge munge-libs munge-devel rng-tools
+RUN yum install -y systemd epel-release openssh-server openssh-clients dbus nfs-utils
 
 RUN systemctl enable dbus
 
 RUN mkdir -p /mnt/nfs/home
 RUN mkdir -p /mnt/nfs/var/nfsshare
-RUN mkdir -p /etc/munge/
+RUN mkdir -p /etc/munge
+RUN mkdir -p /var/lib/munge
+RUN mkdir -p /var/lib/slurm
+RUN mkdir -p /var/log/munge
 RUN mkdir ~/.ssh/
 
 RUN echo "password" | passwd --stdin root
